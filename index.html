@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>箭头轨道消除（简化可玩版）</title>
+  <style>
+    :root { --bg:#d8e6ff; --panel:#8fb7f0; --track:#5d84cf; --track-line:#bdd6ff; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,"Microsoft YaHei",sans-serif;background:linear-gradient(#d6e6ff,#bdd7ff);display:flex;justify-content:center;}
+    .phone{width:min(472px,100vw);min-height:100vh;background:var(--bg);padding:8px;display:flex;flex-direction:column;gap:8px}
+    .top{background:linear-gradient(#6a94da,#5d84cf);border-radius:14px;padding:10px;color:#fff;position:relative;overflow:hidden}
+    #track{width:100%;height:220px;display:block;background:transparent;border-radius:10px}
+    .status{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+    .status .item{background:#7ca3df;border-radius:8px;padding:6px;text-align:center;font-size:13px}
+    .req{font-size:22px;font-weight:700}
+    .grid{background:rgba(255,255,255,.5);border-radius:12px;padding:10px;display:grid;grid-template-columns:repeat(8,1fr);gap:6px;min-height:360px}
+    .tile{border:none;border-radius:8px;color:#fff;font-size:26px;font-weight:700;height:54px;cursor:pointer;box-shadow:inset 0 -3px rgba(0,0,0,.2)}
+    .tile:disabled{opacity:.35;cursor:not-allowed}
+    .controls{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .btn{background:#f9e9bb;border:2px solid #d6bd6a;border-radius:999px;padding:8px 6px;font-weight:700;cursor:pointer}
+    .msg{background:#ffffffc0;border-radius:8px;padding:8px;font-size:14px;min-height:40px}
+  </style>
+</head>
+<body>
+  <main class="phone">
+    <section class="top">
+      <canvas id="track" width="440" height="220"></canvas>
+      <div class="status">
+        <div class="item">目标进度<br><strong id="progress">0%</strong></div>
+        <div class="item">下一步方向<br><span class="req" id="required">↑</span></div>
+        <div class="item">生命<br><strong id="hp">3</strong></div>
+      </div>
+    </section>
+
+    <section class="grid" id="grid"></section>
+    <section class="controls">
+      <button class="btn" id="undoBtn">Undo</button>
+      <button class="btn" id="removeBtn">Remove</button>
+      <button class="btn" id="sortBtn">Sort</button>
+      <button class="btn" id="amplifyBtn">Amplify</button>
+    </section>
+    <div class="msg" id="msg">玩法：点击与“下一步方向”一致的箭头块，让小龙沿轨道前进到终点；点错会掉血。</div>
+  </main>
+
+  <script>
+    const dirs = ["↑","→","↓","←"];
+    const colors = {"↑":"#1fbf62","→":"#3b82f6","↓":"#f97316","←":"#a855f7"};
+    const rows = 6, cols = 8;
+    const track = document.getElementById('track');
+    const ctx = track.getContext('2d');
+    const gridEl = document.getElementById('grid');
+    const requiredEl = document.getElementById('required');
+    const hpEl = document.getElementById('hp');
+    const progressEl = document.getElementById('progress');
+    const msgEl = document.getElementById('msg');
+
+    let hp = 3;
+    let step = 0;
+    let removeCharges = 1;
+    let amplifyCharges = 1;
+    let history = [];
+    const totalSteps = 24;
+    const bombStep = 15;
+    let requiredDir = dirs[Math.floor(Math.random()*4)];
+
+    let grid = Array.from({length: rows}, () => Array.from({length: cols}, () => dirs[Math.floor(Math.random()*4)]));
+
+    function drawTrack() {
+      ctx.clearRect(0,0,track.width,track.height);
+      ctx.lineWidth = 28;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#b9d2ff';
+      ctx.beginPath();
+      ctx.moveTo(38,170);
+      ctx.bezierCurveTo(90,50,190,45,250,95);
+      ctx.bezierCurveTo(300,140,360,140,408,58);
+      ctx.stroke();
+
+      const t = step / totalSteps;
+      const x = 38 + (408-38)*t;
+      const y = 170 - 95*Math.sin(Math.PI*t)*Math.max(0.35,1-t*0.3);
+
+      const tx = 418, ty = 54;
+      const bx = 38 + (408-38)*(bombStep/totalSteps);
+      const by = 170 - 95*Math.sin(Math.PI*(bombStep/totalSteps))*Math.max(0.35,1-(bombStep/totalSteps)*0.3);
+
+      ctx.fillStyle = '#ffd54a';
+      ctx.beginPath(); ctx.arc(tx, ty, 14, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#333'; ctx.fillText('🐱', tx-10, ty+6);
+
+      ctx.fillStyle = '#ddd';
+      ctx.beginPath(); ctx.arc(bx, by, 12, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#111'; ctx.fillText('💣', bx-10, by+5);
+
+      ctx.fillStyle = '#ff6f3d';
+      ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText('🐉', x-10, y+5);
+    }
+
+    function renderGrid() {
+      gridEl.innerHTML = '';
+      for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) {
+        const v = grid[r][c];
+        const b = document.createElement('button');
+        b.className='tile'; b.textContent=v;
+        b.style.background = colors[v];
+        b.onclick = ()=>onPick(r,c);
+        gridEl.appendChild(b);
+      }
+      requiredEl.textContent = requiredDir;
+      hpEl.textContent = hp;
+      progressEl.textContent = `${Math.round(step/totalSteps*100)}%`;
+      drawTrack();
+    }
+
+    function collapseCol(c){
+      const vals=[];
+      for(let r=0;r<rows;r++) if(grid[r][c]) vals.push(grid[r][c]);
+      while(vals.length<rows) vals.unshift(dirs[Math.floor(Math.random()*4)]);
+      for(let r=0;r<rows;r++) grid[r][c]=vals[r];
+    }
+
+    function nextReq(){ requiredDir = dirs[Math.floor(Math.random()*4)]; }
+
+    function onPick(r,c){
+      if (hp<=0 || step>=totalSteps) return;
+      history.push(JSON.stringify({grid, hp, step, requiredDir, removeCharges, amplifyCharges}));
+      const v = grid[r][c];
+      if(v===requiredDir){
+        step += 1;
+        grid[r][c] = null;
+        collapseCol(c);
+        msgEl.textContent = '命中！小龙前进一格。';
+      }else{
+        hp -= 1;
+        msgEl.textContent = `方向不对（你点了 ${v}，需要 ${requiredDir}），扣1点生命。`;
+      }
+      if (step===bombStep) { hp -= 1; msgEl.textContent += ' 经过炸弹位置，额外扣1血！'; }
+      nextReq();
+      checkEnd();
+      renderGrid();
+    }
+
+    function checkEnd(){
+      if(step>=totalSteps){ msgEl.textContent='🎉 你到达终点并救到小猫，胜利！'; }
+      if(hp<=0){ msgEl.textContent='💥 生命耗尽，失败。点 Sort 重新洗牌再试！'; }
+    }
+
+    document.getElementById('undoBtn').onclick=()=>{
+      const last = history.pop();
+      if(!last) return;
+      const s = JSON.parse(last);
+      grid=s.grid; hp=s.hp; step=s.step; requiredDir=s.requiredDir; removeCharges=s.removeCharges; amplifyCharges=s.amplifyCharges;
+      msgEl.textContent='已撤销上一步。'; renderGrid();
+    };
+
+    document.getElementById('removeBtn').onclick=()=>{
+      if(removeCharges<=0) return msgEl.textContent='Remove 已用完。';
+      removeCharges--;
+      const candidates=[];
+      for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) if(grid[r][c]===requiredDir) candidates.push([r,c]);
+      const [r,c] = candidates[Math.floor(Math.random()*candidates.length)] || [0,0];
+      onPick(r,c);
+      msgEl.textContent='Remove：自动消除一个正确方向块。';
+    };
+
+    document.getElementById('sortBtn').onclick=()=>{
+      grid = Array.from({length: rows}, () => Array.from({length: cols}, () => dirs[Math.floor(Math.random()*4)]));
+      if(hp<=0 || step>=totalSteps){ hp=3; step=0; nextReq(); history=[]; }
+      msgEl.textContent='已重新洗牌。';
+      renderGrid();
+    };
+
+    document.getElementById('amplifyBtn').onclick=()=>{
+      if(amplifyCharges<=0) return msgEl.textContent='Amplify 已用完。';
+      amplifyCharges--;
+      step += 2;
+      msgEl.textContent='Amplify：小龙冲刺前进 2 格！';
+      checkEnd();
+      renderGrid();
+    };
+
+    renderGrid();
+  </script>
+</body>
+</html>
